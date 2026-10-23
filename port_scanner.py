@@ -1,76 +1,68 @@
 import socket
-import sys
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
-# Diccionario con puertos comunes para dar un diagnóstico más claro
 PUERTOS_CONOCIDOS = {
     21: "FTP (Transferencia de archivos)",
     22: "SSH (Acceso remoto seguro)",
-    23: "Telnet (Acceso remoto no seguro)",
     25: "SMTP (Correo electrónico)",
     53: "DNS (Resolución de nombres)",
-    80: "HTTP (Navegación Web)",
+    80: "HTTP (Servidor web abierto)",
     110: "POP3 (Correo electrónico)",
+    135: "RPC (Microsoft RPC)",
     143: "IMAP (Correo electrónico)",
-    443: "HTTPS (Navegación Web segura)",
+    443: "HTTPS (Sitio web seguro)",
+    445: "SMB (Compartir archivos en Windows)",
     3306: "MySQL (Base de datos)",
     8080: "HTTP-Alt (Servidor web alternativo)"
 }
 
-def escanear_puerto(host_ip, puerto):
-    """
-    Intenta conectarse a un puerto específico en la IP dada.
-    Retorna True si el puerto está abierto, False si está cerrado o no responde.
-    """
+def escaner_puerto(ip, puerto):
     try:
-        # AF_INET = IPv4, SOCK_STREAM = TCP
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(0.5)  # Tiempo de espera máximo de 0.5s por puerto
-        
-        # connect_ex devuelve 0 si la conexión fue exitosa
-        resultado = s.connect_ex((host_ip, puerto))
-        s.close()
-        
-        return resultado == 0
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1.0)
+            resultado = s.connect_ex((ip, puerto))
+            if resultado == 0:
+                return puerto, True
     except socket.error:
-        return False
+        pass
+    return puerto, False
 
-def iniciar_escaneo():
-    print("=" * 55)
-    print("   🔍 Escáner de Puertos TCP - Herramienta de Auditoría")
-    print("=" * 55)
+def escaner_principal(ip, puertos_a_escanear):
+    inicio = datetime.now()
+    encabezado = f"-" * 50 + f"\nEscaneando objetivo: {ip}\nHora de inicio: {inicio}\n" + "-" * 50
+    print(encabezado)
     
-    objetivo = input("Ingresa la IP o dominio a escanear (ej: scanme.nmap.org): ").strip()
+    puertos_abiertos = []
+    lineas_resultado = [encabezado]
+
+    with ThreadPoolExecutor(max_workers=100) as executor:
+        futures = {executor.submit(escaner_puerto, ip, puerto): puerto for puerto in puertos_a_escanear}
+        
+        for future in futures:
+            puerto, abierto = future.result()
+            if abierto:
+                servicio = PUERTOS_CONOCIDOS.get(puerto, "Servicio desconocido")
+                linea = f"[+] Puerto {puerto} abierto - {servicio}"
+                print(linea)
+                lineas_resultado.append(linea)
+                puertos_abiertos.append(puerto)
+
+    resumen = "-" * 50 + f"\nEscaneo finalizado. Puertos abiertos encontrados: {len(puertos_abiertos)}\n" + "-" * 50
+    print(resumen)
+    lineas_resultado.append(resumen)
+
+    # Guardar reporte en archivo .txt
+    nombre_archivo = f"reporte_{ip.replace('.', '_')}.txt"
+    with open(nombre_archivo, "w", encoding="utf-8") as f:
+        f.write("\n".join(lineas_resultado))
     
-    if not objetivo:
-        print("❌ Error: Debes ingresar un objetivo válido.")
-        return
-
-    # Traducir nombre de dominio a dirección IP
-    try:
-        ip_objetivo = socket.gethostbyname(objetivo)
-    except socket.gaierror:
-        print(f"❌ Error: No se pudo resolver el dominio '{objetivo}'.")
-        return
-
-    print("\n" + "-" * 55)
-    print(f"Escaneando objetivo : {objetivo} ({ip_objetivo})")
-    print(f"Inicio del escaneo : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("-" * 55 + "\n")
-
-    # Lista de puertos a evaluar (puedes ajustar el rango)
-    puertos_a_escanear = [21, 22, 23, 25, 53, 80, 110, 143, 443, 3306, 8080]
-    puertos_abiertos = 0
-
-    for puerto in puertos_a_escanear:
-        if escanear_puerto(ip_objetivo, puerto):
-            servicio = PUERTOS_CONOCIDOS.get(puerto, "Servicio desconocido")
-            print(f"  [+] Puerto {puerto:<5} [ABIERTO]  -> Servicio: {servicio}")
-            puertos_abiertos += 1
-
-    print("\n" + "=" * 55)
-    print(f"Resumen: Escaneo finalizado. Se encontraron {puertos_abiertos} puerto(s) abierto(s).")
-    print("=" * 55)
+    print(f"\n[i] Reporte guardado exitosamente en: {nombre_archivo}")
 
 if __name__ == "__main__":
-    iniciar_escaneo()
+    ip_objetivo = input("Ingresá la IP o dominio a escanear (presioná Enter para 127.0.0.1): ").strip()
+    if not ip_objetivo:
+        ip_objetivo = "127.0.0.1"
+    
+    puertos = range(1, 1025)
+    escaner_principal(ip_objetivo, puertos)
